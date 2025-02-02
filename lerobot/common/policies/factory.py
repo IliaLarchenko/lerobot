@@ -66,6 +66,12 @@ def get_policy_and_config_classes(name: str) -> tuple[Policy, object]:
         from lerobot.common.policies.vqbet.modeling_vqbet import VQBeTPolicy
 
         return VQBeTPolicy, VQBeTConfig
+
+    elif name == "dot":
+        from lerobot.common.policies.dot.configuration_dot import DOTConfig
+        from lerobot.common.policies.dot.modeling_dot import DOTPolicy
+
+        return DOTPolicy, DOTConfig
     else:
         raise NotImplementedError(f"Policy with name {name} is not implemented.")
 

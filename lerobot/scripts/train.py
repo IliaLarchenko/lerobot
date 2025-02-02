@@ -98,6 +98,12 @@ def make_optimizer_and_scheduler(cfg, policy):
 
         optimizer = VQBeTOptimizer(policy, cfg)
         lr_scheduler = VQBeTScheduler(optimizer, cfg)
+    elif cfg.policy.name == "dot":
+        optimizer = torch.optim.AdamW(policy.parameters(), cfg.training.lr)
+        lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, cfg.training.lr_cycle_steps, cfg.training.min_lr
+        )
+
     else:
         raise NotImplementedError()
 
