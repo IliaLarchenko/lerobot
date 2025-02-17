@@ -27,6 +27,7 @@ import torch
 import torch.utils
 from datasets import load_dataset
 from huggingface_hub import create_repo, snapshot_download, upload_folder
+from tqdm import tqdm
 
 from lerobot.common.datasets.compute_stats import aggregate_stats, compute_stats
 from lerobot.common.datasets.image_writer import AsyncImageWriter, write_image
@@ -471,6 +472,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
         # Available stats implies all videos have been encoded and dataset is iterable
         self.consolidated = self.meta.stats is not None
 
+        # Cache for video frames
+        self._video_cache = {}
+        if len(self.meta.video_keys) > 0:
+            self._cache_videos()
+
     def push_to_hub(
         self,
         tags: list | None = None,
@@ -624,19 +630,41 @@ class LeRobotDataset(torch.utils.data.Dataset):
             if key not in self.meta.video_keys
         }
 
+    def _cache_videos(self) -> None:
+        """Cache all video frames at initialization to avoid repeated loading."""
+        logging.info("Caching video frames...")
+        for vid_key in self.meta.video_keys:
+            self._video_cache[vid_key] = {}
+            for ep_idx in tqdm(range(self.num_episodes), desc="Loading videos"):
+                video_path = self.root / self.meta.get_video_file_path(ep_idx, vid_key)
+                if video_path.is_file():
+                    ep_data = self.hf_dataset.filter(
+                        lambda x: x["episode_index"] == ep_idx,  # noqa: B023
+                        writer_batch_size=None,
+                    )
+
+                    # Convert timestamps to list of floats
+                    timestamps = sorted({float(ts) for ts in ep_data["timestamp"]})
+
+                    # Load all frames from the video
+                    frames = decode_video_frames_torchvision(
+                        video_path,
+                        timestamps=timestamps,
+                        tolerance_s=self.tolerance_s,
+                        backend=self.video_backend,
+                    )
+                    self._video_cache[vid_key][ep_idx] = frames
+
     def _query_videos(self, query_timestamps: dict[str, list[float]], ep_idx: int) -> dict:
-        """Note: When using data workers (e.g. DataLoader with num_workers>0), do not call this function
-        in the main process (e.g. by using a second Dataloader with num_workers=0). It will result in a
-        Segmentation Fault. This probably happens because a memory reference to the video loader is created in
-        the main process and a subprocess fails to access it.
-        """
+        """Use cached video frames instead of loading from disk each time."""
         item = {}
         for vid_key, query_ts in query_timestamps.items():
-            video_path = self.root / self.meta.get_video_file_path(ep_idx, vid_key)
-            frames = decode_video_frames_torchvision(
-                video_path, query_ts, self.tolerance_s, self.video_backend
-            )
-            item[vid_key] = frames.squeeze(0)
+            if ep_idx not in self._video_cache[vid_key]:
+                raise ValueError(f"Video frames for episode {ep_idx} and key {vid_key} not found in cache")
+
+            item[vid_key] = self._video_cache[vid_key][ep_idx][
+                [int(ts * self.fps) for ts in query_ts]
+            ].squeeze(0)
 
         return item
 
