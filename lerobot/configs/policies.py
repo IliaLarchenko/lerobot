@@ -143,3 +143,6 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):
         # something like --policy.path (in addition to --policy.type)
         cli_overrides = policy_kwargs.pop("cli_overrides", [])
         return draccus.parse(cls, config_file, args=cli_overrides)
+
+    def filter_delta_indices(self, delta_indices: dict[str, list]) -> dict[str, list]:
+        return delta_indices

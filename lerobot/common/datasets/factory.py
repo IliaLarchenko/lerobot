@@ -87,6 +87,7 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
             cfg.dataset.repo_id,
             episodes=cfg.dataset.episodes,
             delta_indices=delta_indices,
+            filter_delta_indices=cfg.policy.filter_delta_indices,
             image_transforms=image_transforms,
             video_backend=cfg.dataset.video_backend,
             local_files_only=cfg.dataset.local_files_only,

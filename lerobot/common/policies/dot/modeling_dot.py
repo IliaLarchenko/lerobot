@@ -304,16 +304,6 @@ class DOTPolicy(PreTrainedPolicy):
         return action
 
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
-        lookback_ind = torch.randint(0, 2 * self.config.lookback_aug + 1, (1,)).item()
-        for k in list(self.model.obs_mapping.values()) + list(self.image_names) + ["action", "action_is_pad"]:
-            if k != "observation.images":
-                batch[k] = torch.cat(
-                    [
-                        batch[k][:, lookback_ind : lookback_ind + 1],
-                        batch[k][:, 2 * self.config.lookback_aug + 1 :],
-                    ],
-                    1,
-                )
         batch = self.normalize_targets(self.normalize_inputs(batch))
 
         if len(self.config.image_features) > 0:

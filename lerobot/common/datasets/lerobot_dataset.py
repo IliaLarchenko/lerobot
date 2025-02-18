@@ -328,6 +328,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         episodes: list[int] | None = None,
         image_transforms: Callable | None = None,
         delta_indices: dict[list[float]] | None = None,
+        filter_delta_indices=None,  # TODO: fix this, should not pass function
         tolerance_s: float = 1e-4,
         download_videos: bool = True,
         local_files_only: bool = False,
@@ -438,6 +439,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.tolerance_s = tolerance_s
         self.video_backend = video_backend if video_backend else "pyav"
         self.local_files_only = local_files_only
+        self.filter_delta_indices = filter_delta_indices
 
         # Unused attributes
         self.image_writer = None
@@ -581,15 +583,18 @@ class LeRobotDataset(torch.utils.data.Dataset):
     def _get_query_indices(self, idx: int, ep_idx: int) -> tuple[dict[str, list[int | bool]]]:
         ep_start = self.episode_data_index["from"][ep_idx]
         ep_end = self.episode_data_index["to"][ep_idx]
+        filtered_delta_indices = (
+            self.filter_delta_indices(self.delta_indices) if self.filter_delta_indices else self.delta_indices
+        )
         query_indices = {
             key: [max(ep_start.item(), min(ep_end.item() - 1, idx + delta)) for delta in delta_idx]
-            for key, delta_idx in self.delta_indices.items()
+            for key, delta_idx in filtered_delta_indices.items()
         }
         padding = {  # Pad values outside of current episode range
             f"{key}_is_pad": torch.BoolTensor(
                 [(idx + delta < ep_start.item()) | (idx + delta >= ep_end.item()) for delta in delta_idx]
             )
-            for key, delta_idx in self.delta_indices.items()
+            for key, delta_idx in filtered_delta_indices.items()
         }
         return query_indices, padding
 

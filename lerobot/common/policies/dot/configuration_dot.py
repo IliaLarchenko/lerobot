@@ -1,3 +1,4 @@
+import random
 from dataclasses import dataclass, field
 
 from lerobot.common.optim.optimizers import AdamWConfig
@@ -142,3 +143,11 @@ class DOTConfig(PreTrainedConfig):
     @property
     def reward_delta_indices(self) -> None:
         return None
+
+    def filter_delta_indices(self, delta_indices):
+        lookback_ind = random.randint(0, 2 * self.lookback_aug + 1)
+        filtered_delta_indices = {
+            k: [v[lookback_ind]] + v[self.lookback_aug * 2 + 1 :] for k, v in delta_indices.items()
+        }
+
+        return filtered_delta_indices
