@@ -33,37 +33,35 @@ IMAGENET_STATS = {
 }
 
 
-def resolve_delta_timestamps(
-    cfg: PreTrainedConfig, ds_meta: LeRobotDatasetMetadata
-) -> dict[str, list] | None:
-    """Resolves delta_timestamps by reading from the 'delta_indices' properties of the PreTrainedConfig.
+def resolve_delta_indices(cfg: PreTrainedConfig, ds_meta: LeRobotDatasetMetadata) -> dict[str, list] | None:
+    """Resolves delta indices by reading from the 'delta_indices' properties of the PreTrainedConfig.
 
     Args:
         cfg (PreTrainedConfig): The PreTrainedConfig to read delta_indices from.
-        ds_meta (LeRobotDatasetMetadata): The dataset from which features and fps are used to build
-            delta_timestamps against.
+        ds_meta (LeRobotDatasetMetadata): The dataset metadata containing feature information.
 
     Returns:
-        dict[str, list] | None: A dictionary of delta_timestamps, e.g.:
+        dict[str, list] | None: A dictionary of delta indices, e.g.:
             {
-                "observation.state": [-0.04, -0.02, 0]
-                "observation.action": [-0.02, 0, 0.02]
+                "observation.state": [0, 1, 2]
+                "observation.action": [0, 1, 2]
             }
-            returns `None` if the the resulting dict is empty.
+            returns `None` if the resulting dict is empty.
     """
-    delta_timestamps = {}
+    delta_indices = {}
+
     for key in ds_meta.features:
         if key == "next.reward" and cfg.reward_delta_indices is not None:
-            delta_timestamps[key] = [i / ds_meta.fps for i in cfg.reward_delta_indices]
-        if key == "action" and cfg.action_delta_indices is not None:
-            delta_timestamps[key] = [i / ds_meta.fps for i in cfg.action_delta_indices]
-        if key.startswith("observation.") and cfg.observation_delta_indices is not None:
-            delta_timestamps[key] = [i / ds_meta.fps for i in cfg.observation_delta_indices]
+            delta_indices[key] = cfg.reward_delta_indices
+        elif key == "action" and cfg.action_delta_indices is not None:
+            delta_indices[key] = cfg.action_delta_indices
+        elif key.startswith("observation.") and cfg.observation_delta_indices is not None:
+            delta_indices[key] = cfg.observation_delta_indices
 
-    if len(delta_timestamps) == 0:
-        delta_timestamps = None
+    if len(delta_indices) == 0:
+        delta_indices = None
 
-    return delta_timestamps
+    return delta_indices
 
 
 def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDataset:
@@ -84,11 +82,11 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
 
     if isinstance(cfg.dataset.repo_id, str):
         ds_meta = LeRobotDatasetMetadata(cfg.dataset.repo_id, local_files_only=cfg.dataset.local_files_only)
-        delta_timestamps = resolve_delta_timestamps(cfg.policy, ds_meta)
+        delta_indices = resolve_delta_indices(cfg.policy, ds_meta)
         dataset = LeRobotDataset(
             cfg.dataset.repo_id,
             episodes=cfg.dataset.episodes,
-            delta_timestamps=delta_timestamps,
+            delta_indices=delta_indices,
             image_transforms=image_transforms,
             video_backend=cfg.dataset.video_backend,
             local_files_only=cfg.dataset.local_files_only,
@@ -98,7 +96,6 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
         dataset = MultiLeRobotDataset(
             cfg.dataset.repo_id,
             # TODO(aliberts): add proper support for multi dataset
-            # delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
             video_backend=cfg.dataset.video_backend,
         )

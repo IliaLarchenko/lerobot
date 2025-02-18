@@ -38,13 +38,11 @@ from lerobot.common.datasets.utils import (
     STATS_PATH,
     TASKS_PATH,
     append_jsonlines,
-    check_delta_timestamps,
     check_timestamps_sync,
     check_version_compatibility,
     create_branch,
     create_empty_dataset_info,
     create_lerobot_dataset_card,
-    get_delta_indices,
     get_episode_data_index,
     get_features_from_robot,
     get_hf_features_from_features,
@@ -329,7 +327,7 @@ class LeRobotDataset(torch.utils.data.Dataset):
         root: str | Path | None = None,
         episodes: list[int] | None = None,
         image_transforms: Callable | None = None,
-        delta_timestamps: dict[list[float]] | None = None,
+        delta_indices: dict[list[float]] | None = None,
         tolerance_s: float = 1e-4,
         download_videos: bool = True,
         local_files_only: bool = False,
@@ -418,12 +416,11 @@ class LeRobotDataset(torch.utils.data.Dataset):
             image_transforms (Callable | None, optional): You can pass standard v2 image transforms from
                 torchvision.transforms.v2 here which will be applied to visual modalities (whether they come
                 from videos or images). Defaults to None.
-            delta_timestamps (dict[list[float]] | None, optional): _description_. Defaults to None.
+            delta_indices (dict[list[float]] | None, optional): _description_. Defaults to None.
             tolerance_s (float, optional): Tolerance in seconds used to ensure data timestamps are actually in
                 sync with the fps value. It is used at the init of the dataset to make sure that each
                 timestamps is separated to the next by 1/fps +/- tolerance_s. This also applies to frames
-                decoded from video files. It is also used to check that `delta_timestamps` (when provided) are
-                multiples of 1/fps. Defaults to 1e-4.
+                decoded from video files.
             download_videos (bool, optional): Flag to download the videos. Note that when set to True but the
                 video files are already present on local disk, they won't be downloaded again. Defaults to
                 True.
@@ -436,11 +433,10 @@ class LeRobotDataset(torch.utils.data.Dataset):
         self.repo_id = repo_id
         self.root = Path(root) if root else LEROBOT_HOME / repo_id
         self.image_transforms = image_transforms
-        self.delta_timestamps = delta_timestamps
+        self.delta_indices = delta_indices
         self.episodes = episodes
         self.tolerance_s = tolerance_s
         self.video_backend = video_backend if video_backend else "pyav"
-        self.delta_indices = None
         self.local_files_only = local_files_only
 
         # Unused attributes
@@ -462,11 +458,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         # Check timestamps
         check_timestamps_sync(self.hf_dataset, self.episode_data_index, self.fps, self.tolerance_s)
-
-        # Setup delta_indices
-        if self.delta_timestamps is not None:
-            check_delta_timestamps(self.delta_timestamps, self.fps, self.tolerance_s)
-            self.delta_indices = get_delta_indices(self.delta_timestamps, self.fps)
 
         # Available stats implies all videos have been encoded and dataset is iterable
         self.consolidated = self.meta.stats is not None
@@ -963,7 +954,6 @@ class LeRobotDataset(torch.utils.data.Dataset):
         obj.episodes = None
         obj.hf_dataset = None
         obj.image_transforms = None
-        obj.delta_timestamps = None
         obj.delta_indices = None
         obj.episode_data_index = None
         obj.video_backend = video_backend if video_backend is not None else "pyav"
@@ -983,7 +973,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         root: str | Path | None = None,
         episodes: dict | None = None,
         image_transforms: Callable | None = None,
-        delta_timestamps: dict[list[float]] | None = None,
+        delta_indices: dict[list[float]] | None = None,
         tolerances_s: dict | None = None,
         download_videos: bool = True,
         local_files_only: bool = False,
@@ -993,7 +983,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
         self.repo_ids = repo_ids
         self.root = Path(root) if root else LEROBOT_HOME
         self.tolerances_s = tolerances_s if tolerances_s else {repo_id: 1e-4 for repo_id in repo_ids}
-        # Construct the underlying datasets passing everything but `transform` and `delta_timestamps` which
+        # Construct the underlying datasets passing everything but `transform` and `delta_indices` which
         # are handled by this class.
         self._datasets = [
             LeRobotDataset(
@@ -1001,7 +991,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                 root=self.root / repo_id,
                 episodes=episodes[repo_id] if episodes else None,
                 image_transforms=image_transforms,
-                delta_timestamps=delta_timestamps,
+                delta_indices=delta_indices,
                 tolerance_s=self.tolerances_s[repo_id],
                 download_videos=download_videos,
                 local_files_only=local_files_only,
@@ -1031,7 +1021,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
             self.disabled_features.update(extra_keys)
 
         self.image_transforms = image_transforms
-        self.delta_timestamps = delta_timestamps
+        self.delta_indices = delta_indices
         self.stats = aggregate_stats(self._datasets)
 
     @property
@@ -1108,8 +1098,8 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
     @property
     def tolerance_s(self) -> float:
         """Tolerance in seconds used to discard loaded frames when their timestamps
-        are not close enough from the requested frames. It is only used when `delta_timestamps`
-        is provided or when loading video frames from mp4 files.
+        are not close enough from the requested frames. It is only used when loading video
+        frames from mp4 files.
         """
         # 1e-4 to account for possible numerical error
         return 1 / self.fps - 1e-4
