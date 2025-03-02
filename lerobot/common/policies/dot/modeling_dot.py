@@ -48,7 +48,7 @@ class DOT(nn.Module):
 
         if self.config.env_state_feature:
             self.projections["environment_state"] = nn.Linear(
-                self.config.env_state_feature.shape[0], self.config.dim_model
+                self.config.env_state_feature.shape[0] * 2, self.config.dim_model
             )
             self.n_features += self.config.n_obs_steps
 
@@ -244,6 +244,12 @@ class DOTPolicy(PreTrainedPolicy):
         )
 
     def _prepare_batch_for_inference(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
+        # Concatenate goal state to environment state
+
+        batch["observation.environment_state"] = torch.cat(
+            [batch["observation.environment_state"], batch["observation.goal_state"]], dim=-1
+        )
+
         batch = self.normalize_inputs(batch)
 
         # Resize and stack all images
@@ -267,6 +273,7 @@ class DOTPolicy(PreTrainedPolicy):
     def _chunk_actions(self, actions: Tensor) -> Tensor:
         # Store the previous action predictions in a buffer
         # Compute the weighted average of the inference horizon action predictions
+
         if self._old_predictions is not None:
             self._old_predictions[:, 0] = actions
         else:
@@ -305,6 +312,7 @@ class DOTPolicy(PreTrainedPolicy):
 
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         lookback_ind = torch.randint(0, 2 * self.config.lookback_aug + 1, (1,)).item()
+
         for k in list(self.model.obs_mapping.values()) + list(self.image_names) + ["action", "action_is_pad"]:
             if k != "observation.images":
                 batch[k] = torch.cat(
@@ -314,6 +322,78 @@ class DOTPolicy(PreTrainedPolicy):
                     ],
                     1,
                 )
+
+        # Hardcoded for the PushT without randomization
+        # Add goal state by concatenating it to environment state
+        goal_state = torch.full_like(batch["observation.environment_state"], 0.0)
+        goal_state[..., 0] = 213.57359312880715
+        goal_state[..., 1] = 213.57359312880715
+        goal_state[..., 2] = 298.42640687119285
+        goal_state[..., 3] = 298.42640687119285
+        goal_state[..., 4] = 277.2132034355964
+        goal_state[..., 5] = 319.6396103067893
+        goal_state[..., 6] = 192.36038969321072
+        goal_state[..., 7] = 234.78679656440357
+        goal_state[..., 8] = 224.18019484660536
+        goal_state[..., 9] = 266.60660171779824
+        goal_state[..., 10] = 245.3933982822018
+        goal_state[..., 11] = 287.81980515339467
+        goal_state[..., 12] = 181.7537879754125
+        goal_state[..., 13] = 351.45941546018395
+        goal_state[..., 14] = 160.54058453981608
+        goal_state[..., 15] = 330.2462120245875
+        batch["observation.environment_state"] = torch.cat(
+            [batch["observation.environment_state"], goal_state], dim=-1
+        )
+
+        # Apply random transformations to coordinates
+        bs = batch["observation.environment_state"].shape[0]
+        device = batch["observation.environment_state"].device
+
+        # Generate random transformations per batch element
+        translations = torch.rand(bs, 2, device=device) * 600 - 300  # +/- 300 pixels
+        rotations = torch.rand(bs, device=device) * 2 * torch.pi  # 0 to 360 degrees
+
+        # Helper function to transform x,y coordinates
+        def transform_coords(coords, translation, rotation):
+            # Save original shape
+            original_shape = coords.shape
+
+            # Reshape to pairs of x,y coordinates
+            n_pairs = coords.shape[-1] // 2
+            coords = coords.view(-1, n_pairs, 2)
+
+            # Apply rotation
+            # Create rotation matrix
+            cos_r = torch.cos(rotation)
+            sin_r = torch.sin(rotation)
+            rot_matrix = torch.tensor([[cos_r, -sin_r], [sin_r, cos_r]], device=device)
+
+            # Apply rotation: (n_pairs,2) @ (2,2) -> (n_pairs,2)
+            transformed_coords = torch.matmul(coords.squeeze(0), rot_matrix)
+
+            # Apply translation
+            transformed_coords = transformed_coords + translation
+
+            # Reshape back to original dimensions
+            transformed_coords = transformed_coords.view(original_shape)
+            return transformed_coords
+
+        # Apply transformations to each batch element
+        for i in range(bs):
+            # Transform environment state coordinates
+            batch["observation.environment_state"][i] = transform_coords(
+                batch["observation.environment_state"][i], translations[i], rotations[i]
+            )
+
+            # Transform state coordinates
+            batch["observation.state"][i] = transform_coords(
+                batch["observation.state"][i], translations[i], rotations[i]
+            )
+
+            # Transform action coordinates
+            batch["action"][i] = transform_coords(batch["action"][i], translations[i], rotations[i])
+
         batch = self.normalize_targets(self.normalize_inputs(batch))
 
         if len(self.config.image_features) > 0:

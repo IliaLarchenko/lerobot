@@ -41,11 +41,11 @@ class DOTConfig(PreTrainedConfig):
     )
 
     # Not sure if there is a better way to do this with new config system.
-    override_dataset_stats: bool = False
+    override_dataset_stats: bool = True
     new_dataset_stats: dict[str, dict[str, list[float]]] = field(
         default_factory=lambda: {
             "action": {"max": [512.0] * 2, "min": [0.0] * 2},
-            "observation.environment_state": {"max": [512.0] * 16, "min": [0.0] * 16},
+            "observation.environment_state": {"max": [512.0] * 32, "min": [0.0] * 32},
             "observation.state": {"max": [512.0] * 2, "min": [0.0] * 2},
         }
     )

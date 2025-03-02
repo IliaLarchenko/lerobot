@@ -71,6 +71,7 @@ class PushtEnv(EnvConfig):
     render_mode: str = "rgb_array"
     visualization_width: int = 384
     visualization_height: int = 384
+    randomize_goal: bool = False
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             "action": PolicyFeature(type=FeatureType.ACTION, shape=(2,)),
@@ -83,6 +84,7 @@ class PushtEnv(EnvConfig):
             "agent_pos": OBS_ROBOT,
             "environment_state": OBS_ENV,
             "pixels": OBS_IMAGE,
+            "goal_state": "observation.goal_state",
         }
     )
 
@@ -91,6 +93,7 @@ class PushtEnv(EnvConfig):
             self.features["pixels"] = PolicyFeature(type=FeatureType.VISUAL, shape=(384, 384, 3))
         elif self.obs_type == "environment_state_agent_pos":
             self.features["environment_state"] = PolicyFeature(type=FeatureType.ENV, shape=(16,))
+            self.features["goal_state"] = PolicyFeature(type=FeatureType.ENV, shape=(16,))
 
     @property
     def gym_kwargs(self) -> dict:
@@ -100,6 +103,7 @@ class PushtEnv(EnvConfig):
             "visualization_width": self.visualization_width,
             "visualization_height": self.visualization_height,
             "max_episode_steps": self.episode_length,
+            "randomize_goal": self.randomize_goal,
         }
 
 
