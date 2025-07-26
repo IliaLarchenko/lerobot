@@ -119,7 +119,7 @@ class DOTConfig(PreTrainedConfig):
             raise ValueError("You must provide at least one image or the environment state among the inputs.")
 
     @property
-    def observation_delta_indices(self) -> None:
+    def observation_delta_indices(self) -> list:
         far_past_obs = list(
             range(
                 -self.lookback_aug - self.lookback_obs_steps, self.lookback_aug + 1 - self.lookback_obs_steps

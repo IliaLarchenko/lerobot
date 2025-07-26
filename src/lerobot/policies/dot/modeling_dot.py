@@ -121,7 +121,11 @@ class DOT(nn.Module):
 
         for state in self.projections_names:
             batch_state = self.obs_mapping[state]
-            if batch_state in batch:
+            if state == "images" and "processed_image_features" in batch:
+                # Use pre-computed image features (inference path)
+                inputs_projections_list.append(batch["processed_image_features"])
+            elif batch_state in batch:
+                # Original path: process through projections (training path or non-image inputs)
                 bs, n_obs, *obs_shape = batch[batch_state].shape
                 enc = self.projections[state](batch[batch_state].view(bs * n_obs, *obs_shape)).view(
                     bs, n_obs, -1
@@ -189,6 +193,10 @@ class DOTPolicy(PreTrainedPolicy):
         # Inference action chunking and observation queues
         self._old_predictions = None
         self._input_buffers = {}
+        # Cache for processed image features to avoid recomputing ResNet
+        # During inference, we process images through ResNet only once per step
+        # and cache the features instead of reprocessing buffered raw images
+        self._feature_buffers = {}
 
         # Weights used for chunking
         action_weights = self.alpha ** torch.arange(self.inference_horizon).float()
@@ -218,6 +226,7 @@ class DOTPolicy(PreTrainedPolicy):
     def reset(self):
         self._old_predictions = None
         self._input_buffers = {}
+        self._feature_buffers = {}
         self.last_action = None
         self.step = 0
 
@@ -245,24 +254,56 @@ class DOTPolicy(PreTrainedPolicy):
             dim=1,
         )
 
+    def _update_feature_buffers(self, buffer_name: str, features: Tensor) -> Tensor:
+        """Update feature buffers for processed image features to avoid recomputing ResNet."""
+        # We keep the last lookback_obs_steps + 1 of processed features in the queue
+        if buffer_name not in self._feature_buffers:
+            self._feature_buffers[buffer_name] = features.unsqueeze(1).repeat(
+                1,
+                self.config.lookback_obs_steps + 1,
+                *torch.ones(len(features.shape[1:])).int(),
+            )
+        else:
+            self._feature_buffers[buffer_name] = self._feature_buffers[buffer_name].roll(shifts=-1, dims=1)
+            self._feature_buffers[buffer_name][:, -1] = features
+
+        return torch.cat(
+            [
+                self._feature_buffers[buffer_name][:, :1],
+                self._feature_buffers[buffer_name][:, -(self.config.n_obs_steps - 1) :],
+            ],
+            dim=1,
+        )
+
     def _prepare_batch_for_inference(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         batch = self.normalize_inputs(batch)
 
-        # Resize and stack all images
         if len(self.image_names) > 0:
-            batch[OBS_IMAGES] = torch.stack(
+            current_images = torch.stack(
                 [self.resize_transform(batch[k]) for k in self.image_names],
                 dim=1,
             )  # bs, n_cam, c, h, w
+            
+            # Flatten to process through ResNet: (bs, n_cam, c, h, w) -> (bs * n_cam, c, h, w)
+            current_images_flat = current_images.flatten(0, 1)
+            
+            # Process through ResNet backbone ONCE
+            with torch.no_grad():
+                current_features = self.model.projections["images"](current_images_flat)  # bs * n_cam, dim_model
+            
+            # Reshape back: (bs * n_cam, dim_model) -> (bs, n_cam, dim_model)
+            current_features = current_features.view(current_images.shape[0], current_images.shape[1], -1)
+            
+            # Update feature buffer with processed features (not raw images!)
+            buffered_features = self._update_feature_buffers("images", current_features)
+            
+            # Store processed features in batch for the model to use directly
+            batch["processed_image_features"] = buffered_features.flatten(1, 2)  # bs, n_obs * n_cam, dim_model
 
-        # Update observation queues for all inputs and stack the last n_obs_steps
+        # Update observation queues for non-image inputs (states) - these are cheap to buffer
         for name, batch_name in self.model.obs_mapping.items():
-            batch[batch_name] = self._update_observation_buffers(name, batch[batch_name])
-
-        # Reshape images tensor to keep the same order as during training
-        if OBS_IMAGES in batch:
-            batch[OBS_IMAGES] = batch[OBS_IMAGES].flatten(1, 2)
-            # bs, n_obs * n_cam, c, h, w
+            if name != "images":  # Skip images since we handled them above
+                batch[batch_name] = self._update_observation_buffers(name, batch[batch_name])
 
         return batch
 
